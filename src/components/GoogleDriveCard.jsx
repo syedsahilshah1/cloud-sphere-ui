@@ -1,0 +1,73 @@
+import React from 'react';
+import { MoreVertical, FileText, FileCode, Film, Eye } from 'lucide-react';
+
+export default function GoogleDriveCard({ file, onMenuClick }) {
+  const hasPreview = file.type === 'jpg' || file.type === 'png';
+
+  return (
+    <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.015)] hover:shadow-[0_12px_40px_rgba(90,81,230,0.08)] hover:border-slate-200/60 transition-all duration-300 overflow-hidden flex flex-col group h-64 select-none relative">
+      {/* Thumbnail area */}
+      <div className="relative h-44 bg-slate-50 flex items-center justify-center border-b border-slate-100 overflow-hidden">
+        {hasPreview ? (
+          <>
+            <img 
+              src={file.previewUrl} 
+              alt={file.name} 
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+              loading="lazy"
+            />
+            {/* Elegant preview hover indicator */}
+            <div className="absolute inset-0 bg-indigo-950/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+              <span className="bg-white/90 backdrop-blur-md text-slate-800 text-xs font-semibold py-1.5 px-3 rounded-full flex items-center gap-1.5 shadow-sm transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+                <Eye size={14} /> Preview
+              </span>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-center w-full h-full relative">
+            <div className={`w-16 h-16 rounded-[1.25rem] flex items-center justify-center shadow-sm transform group-hover:scale-110 transition-transform duration-300 ${
+              file.type === 'pdf' ? 'bg-rose-50 text-rose-600' :
+              file.type === 'docx' ? 'bg-indigo-50 text-indigo-600' :
+              file.type === 'mp4' ? 'bg-purple-50 text-purple-600' :
+              'bg-slate-50 text-slate-600'
+            }`}>
+              {file.type === 'pdf' && <FileText size={28} className="stroke-[1.5]" />}
+              {file.type === 'docx' && <FileText size={28} className="stroke-[1.5]" />}
+              {file.type === 'mp4' && <Film size={28} className="stroke-[1.5]" />}
+              {file.type === 'txt' && <FileCode size={28} className="stroke-[1.5]" />}
+            </div>
+          </div>
+        )}
+        
+        {/* Top-right extension badge */}
+        <span className={`absolute top-4 right-4 text-[10px] font-bold px-2 py-0.5 rounded-md shadow-sm select-none uppercase tracking-wider ${
+          file.type === 'pdf' ? 'bg-rose-100/90 text-rose-700' :
+          file.type === 'docx' ? 'bg-indigo-100/90 text-indigo-700' :
+          file.type === 'mp4' ? 'bg-purple-100/90 text-purple-700' :
+          file.type === 'txt' ? 'bg-slate-200/90 text-slate-700' :
+          'bg-pink-100/90 text-pink-700' // jpg/png
+        }`}>
+          {file.type}
+        </span>
+      </div>
+
+      {/* Info area */}
+      <div className="p-4 flex-1 flex flex-col justify-between bg-white">
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="font-semibold text-slate-800 text-sm truncate flex-1 group-hover:text-indigo-600 transition-colors" title={file.name}>
+            {file.name}
+          </h3>
+          <button 
+            onClick={onMenuClick}
+            className="text-slate-400 hover:text-slate-700 transition-colors cursor-pointer p-0.5 rounded-md hover:bg-slate-50"
+          >
+            <MoreVertical size={16} />
+          </button>
+        </div>
+        <p className="text-xs text-slate-400 font-medium">
+          Modified {file.modified} • {file.size}
+        </p>
+      </div>
+    </div>
+  );
+}
