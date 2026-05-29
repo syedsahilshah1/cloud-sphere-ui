@@ -1,198 +1,740 @@
-import React, { useState } from 'react';
-import { Cloud, Lock, Mail, ShieldCheck, Shield, User, ShieldAlert } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Cloud, ShieldCheck, ShieldAlert, Sparkles, Shield, HardDrive, HelpCircle } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
+import { requestGoogleAccessToken } from '../lib/googleDriveClient';
+
+const GoogleIcon = () => (
+  <svg className="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+  </svg>
+);
+
+const DriveIcon = () => (
+  <svg className="w-8 h-8 flex-shrink-0" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M15.75 3h-7.5L2 14.25h7.5L15.75 3z" fill="#0066DA"/>
+    <path d="M22 14.25H14.5L11.25 21h7.5L22 14.25z" fill="#00A85D"/>
+    <path d="M9.5 14.25L5.75 21H20.5L22 18l-3.25-5.25H9.5z" fill="#FFD000"/>
+    <path d="M9.5 14.25l3.25-5.25h6l3.25 5.25H9.5z" fill="#00832D"/>
+  </svg>
+);
 
 export default function Login({ onLogin }) {
-  const [email, setEmail] = useState('kc@cloudsphere.io');
-  const [password, setPassword] = useState('password123');
-  const [selectedRole, setSelectedRole] = useState('user'); // 'user' or 'superadmin'
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const [connectingUser, setConnectingUser] = useState(null);
+  const [verificationStage, setVerificationStage] = useState('idle'); // 'idle', 'verifying_google', 'checking_drive', 'drive_not_linked', 'linking_drive', 'fetching_drive_details'
+  
+  // Real OAuth Integration states
+  const [useLiveGoogle, setUseLiveGoogle] = useState(() => {
+    return localStorage.getItem('cs_use_live_google') === 'true';
+  });
+  const [googleClientId, setGoogleClientId] = useState(() => {
+    return import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('cs_google_client_id') || '';
+  });
+  const [showClientIdInfo, setShowClientIdInfo] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const handleRoleChange = (role) => {
-    setSelectedRole(role);
-    if (role === 'superadmin') {
-      setEmail('superadmin@cloudsphere.io');
-    } else {
-      setEmail('kc@cloudsphere.io');
+  // Custom sign-in form states
+  const [isCustomSignInOpen, setIsCustomSignInOpen] = useState(false);
+  const [customEmail, setCustomEmail] = useState('');
+  const [customName, setCustomName] = useState('');
+  const [customRole, setCustomRole] = useState('user');
+  const [customAvatar, setCustomAvatar] = useState('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80');
+  const [customLinkDrive, setCustomLinkDrive] = useState(false);
+
+  const presetAvatars = [
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80',
+    'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80'
+  ];
+
+  // Dynamic storage-backed Google accounts state
+  const [profiles, setProfiles] = useState(() => {
+    const defaultProfile = {
+      email: 'sahilkhan536ah@gmail.com',
+      name: 'Sahil Shah',
+      role: 'superadmin',
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+      desc: 'Workspace Administrator (Primary)',
+      isDriveLinked: true
+    };
+
+    const stored = localStorage.getItem('cs_google_accounts');
+    if (stored) {
+      try {
+        let parsed = JSON.parse(stored);
+        // Filter out other default credentials
+        parsed = parsed.filter(p => p.email !== 'kc@cloudsphere.io' && p.email !== 'superadmin@cloudsphere.io');
+        // Ensure sahilkhan536ah@gmail.com is present as superadmin
+        const hasSahil = parsed.some(p => p.email === 'sahilkhan536ah@gmail.com');
+        if (!hasSahil) {
+          parsed.unshift(defaultProfile);
+        } else {
+          // Force Sahil to be superadmin and linked
+          parsed = parsed.map(p => {
+            if (p.email === 'sahilkhan536ah@gmail.com') {
+              return { ...p, role: 'superadmin', isDriveLinked: true };
+            }
+            if (p.isDriveLinked === undefined) {
+              p.isDriveLinked = false;
+            }
+            return p;
+          });
+        }
+        localStorage.setItem('cs_google_accounts', JSON.stringify(parsed));
+        return parsed;
+      } catch (e) {
+        // Fallback
+      }
+    }
+    const defaults = [defaultProfile];
+    localStorage.setItem('cs_google_accounts', JSON.stringify(defaults));
+    return defaults;
+  });
+
+  // Track live selection state changes
+  useEffect(() => {
+    localStorage.setItem('cs_use_live_google', useLiveGoogle.toString());
+  }, [useLiveGoogle]);
+
+  // Sync profile details with Supabase Database safely
+  const syncProfileToSupabase = async (profileData) => {
+    try {
+      const dbProfile = {
+        id: profileData.googleUserId || profileData.email,
+        email: profileData.email,
+        name: profileData.name,
+        role: profileData.email === 'sahilkhan536ah@gmail.com' ? 'superadmin' : profileData.role || 'user',
+        status: 'active',
+        storage: profileData.role === 'superadmin' ? '2 TB' : '1.2 TB',
+        avatar: profileData.avatar,
+        is_drive_linked: profileData.isDriveLinked,
+        last_login: new Date().toISOString()
+      };
+
+      const { error } = await supabase
+        .from('profiles')
+        .upsert(dbProfile, { onConflict: 'email' });
+
+      if (error) {
+        console.warn("Supabase profile sync failed (schema might not be created yet):", error.message);
+      } else {
+        console.log("Profile synchronized successfully with Supabase.");
+      }
+    } catch (e) {
+      console.warn("Could not reach Supabase. Fallback memory sync active.", e);
     }
   };
 
-  const handleSubmit = (e) => {
+  // Triggers Google GIS Client flow
+  const handleLiveGoogleLogin = async () => {
+    if (!googleClientId) {
+      setErrorMessage('Please enter a valid Google Client ID to authorize with Google Identity Services.');
+      setShowClientIdInfo(true);
+      return;
+    }
+
+    setErrorMessage('');
+    localStorage.setItem('cs_google_client_id', googleClientId.trim());
+
+    try {
+      setVerificationStage('verifying_google');
+      // Trigger GIS authorization popup
+      const tokenResponse = await requestGoogleAccessToken(googleClientId.trim());
+      const accessToken = tokenResponse.access_token;
+
+      // Fetch user profile information using standard oauth endpoint
+      const profileRes = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${accessToken}`);
+      if (!profileRes.ok) {
+        throw new Error('Failed to retrieve user details from Google profile servers.');
+      }
+      
+      const googleUser = await profileRes.json();
+      const newLiveProfile = {
+        email: googleUser.email.toLowerCase(),
+        name: googleUser.name,
+        role: googleUser.email === 'sahilkhan536ah@gmail.com' ? 'superadmin' : 'user',
+        avatar: googleUser.picture || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+        isDriveLinked: true,
+        accessToken: accessToken,
+        googleUserId: googleUser.sub
+      };
+
+      setConnectingUser(newLiveProfile);
+      setVerificationStage('checking_drive');
+
+      // Stage 2: Mapped space verified
+      setTimeout(() => {
+        setVerificationStage('fetching_drive_details');
+        
+        // Stage 3: Fetching dynamic content
+        setTimeout(async () => {
+          await syncProfileToSupabase(newLiveProfile);
+          if (onLogin) {
+            onLogin(newLiveProfile);
+          }
+        }, 1500);
+      }, 1500);
+
+    } catch (err) {
+      console.error(err);
+      setVerificationStage('idle');
+      setErrorMessage(
+        err.message || 
+        (err.error ? `Google OAuth Error: ${err.error}` : 'Sign in cancelled or configuration rejected by Google Auth policy.')
+      );
+    }
+  };
+
+  const handleSelectProfile = (profile) => {
+    setConnectingUser(profile);
+    setVerificationStage('verifying_google');
+    
+    // Stage 1: Verify Google Identity (OAuth token handshake)
+    setTimeout(() => {
+      setVerificationStage('checking_drive');
+      
+      // Stage 2: Check for linked Google Drive
+      setTimeout(() => {
+        const isLinked = profile.isDriveLinked ?? false;
+        if (isLinked) {
+          setVerificationStage('fetching_drive_details');
+          
+          // Stage 3: Fetch personalized details from Google Drive
+          setTimeout(async () => {
+            await syncProfileToSupabase(profile);
+            if (onLogin) {
+              onLogin({
+                email: profile.email,
+                name: profile.name,
+                role: profile.role,
+                avatar: profile.avatar,
+                isDriveLinked: true
+              });
+            }
+          }, 1500);
+        } else {
+          setVerificationStage('drive_not_linked');
+        }
+      }, 1500);
+    }, 1500);
+  };
+
+  const handleLinkDriveAndLogin = (profile) => {
+    setVerificationStage('linking_drive');
+    
+    // Simulate mounting partition and registering namespace
+    setTimeout(async () => {
+      const updatedProfiles = profiles.map(p => {
+        if (p.email === profile.email) {
+          return { ...p, isDriveLinked: true };
+        }
+        return p;
+      });
+      setProfiles(updatedProfiles);
+      localStorage.setItem('cs_google_accounts', JSON.stringify(updatedProfiles));
+      
+      const loggedProfile = { ...profile, isDriveLinked: true };
+      await syncProfileToSupabase(loggedProfile);
+
+      if (onLogin) {
+        onLogin(loggedProfile);
+      }
+    }, 2000);
+  };
+
+  const handleContinueWithoutDrive = async (profile) => {
+    const loggedProfile = { ...profile, isDriveLinked: false };
+    await syncProfileToSupabase(loggedProfile);
+    if (onLogin) {
+      onLogin(loggedProfile);
+    }
+  };
+
+  const handleCreateCustomAccount = (e) => {
     e.preventDefault();
-    if (onLogin) {
-      const isSuper = email.trim().toLowerCase() === 'superadmin@cloudsphere.io';
-      onLogin({
-        email: email.trim(),
-        name: isSuper ? 'Super Admin' : 'KC Developer',
-        role: isSuper ? 'superadmin' : 'user',
-        avatar: isSuper 
-          ? 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80'
-          : 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80'
-      });
-    }
-  };
+    if (!customEmail || !customName) return;
 
-  const handleThirdPartyLogin = () => {
-    if (onLogin) {
-      const isSuper = selectedRole === 'superadmin';
-      onLogin({
-        email: isSuper ? 'superadmin@cloudsphere.io' : 'kc@cloudsphere.io',
-        name: isSuper ? 'Super Admin' : 'KC Developer',
-        role: isSuper ? 'superadmin' : 'user',
-        avatar: isSuper 
-          ? 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80'
-          : 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80'
-      });
+    // Direct profile construction
+    const newProfile = {
+      email: customEmail.toLowerCase().trim(),
+      name: customName.trim(),
+      role: customRole,
+      avatar: customAvatar,
+      desc: customRole === 'superadmin' ? 'Workspace Administrator' : 'Personal Cloud Storage Space',
+      isDriveLinked: customLinkDrive
+    };
+
+    // Prevent duplicate emails
+    if (profiles.some(p => p.email === newProfile.email)) {
+      const existing = profiles.find(p => p.email === newProfile.email);
+      setIsCustomSignInOpen(false);
+      handleSelectProfile(existing);
+      return;
     }
+
+    const updatedProfiles = [...profiles, newProfile];
+    setProfiles(updatedProfiles);
+    localStorage.setItem('cs_google_accounts', JSON.stringify(updatedProfiles));
+
+    // Clear form states & proceed directly to OAuth validation for the created user
+    setCustomEmail('');
+    setCustomName('');
+    setCustomLinkDrive(false);
+    setIsCustomSignInOpen(false);
+    handleSelectProfile(newProfile);
   };
 
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background gradients */}
+      {/* Premium ambient light vectors */}
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
-        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full bg-blue-100/50 blur-3xl mix-blend-multiply"></div>
-        <div className="absolute top-[20%] -right-[10%] w-[40%] h-[40%] rounded-full bg-purple-100/50 blur-3xl mix-blend-multiply"></div>
+        <div className="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-indigo-100/50 blur-3xl mix-blend-multiply"></div>
+        <div className="absolute -bottom-[20%] -right-[10%] w-[50%] h-[50%] rounded-full bg-emerald-50/50 blur-3xl mix-blend-multiply"></div>
       </div>
 
-      <div className="absolute top-8 left-8 flex items-center gap-2 text-slate-500 font-medium z-10 text-sm tracking-wide">
-        <ShieldCheck size={18} className="text-indigo-600" />
-        MILITARY GRADE ENCRYPTION
+      <div className="absolute top-8 left-8 flex items-center gap-2 text-slate-500 font-medium z-10 text-xs tracking-wider">
+        <ShieldCheck size={16} className="text-indigo-600" />
+        SECURED BY GOOGLE WORKSPACE PROTOCOL
       </div>
 
-      <div className="bg-white/80 backdrop-blur-xl w-full max-w-md rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-white/50 p-10 z-10">
-        <div className="flex flex-col items-center mb-6">
-          <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-indigo-600/20">
-            <Cloud className="text-white w-8 h-8" />
+      <div className="bg-white/90 backdrop-blur-2xl w-full max-w-md rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.03)] border border-white/80 p-10 z-10 transition-all duration-300">
+        
+        {/* Verification Loader Box */}
+        {verificationStage !== 'idle' && verificationStage !== 'drive_not_linked' && connectingUser ? (
+          <div className="flex flex-col py-2 animate-fade-in text-center">
+            <div className="flex flex-col items-center mb-6">
+              <div className="relative mb-3 group">
+                <img 
+                  src={connectingUser.avatar} 
+                  alt={connectingUser.name} 
+                  className="w-16 h-16 rounded-full object-cover border-4 border-indigo-50 shadow-md group-hover:scale-105 transition-transform duration-300"
+                />
+                <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow border border-slate-100">
+                  <GoogleIcon />
+                </div>
+              </div>
+              <h3 className="font-bold text-slate-800 text-sm">{connectingUser.name}</h3>
+              <p className="text-slate-400 text-xs">{connectingUser.email}</p>
+            </div>
+
+            <div className="space-y-4 text-left bg-slate-50 border border-slate-100 rounded-3xl p-5 mb-4">
+              {/* Step 1: Google OAuth */}
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex-shrink-0">
+                  {verificationStage === 'verifying_google' ? (
+                    <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center text-white text-[9px] font-bold">✓</div>
+                  )}
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold text-slate-700">Google Identity Verification</h5>
+                  <p className="text-[10px] text-slate-400">
+                    {verificationStage === 'verifying_google' ? 'Authenticating with Google OAuth credentials...' : 'Identity verified successfully'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 2: Drive Partition */}
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex-shrink-0">
+                  {verificationStage === 'verifying_google' ? (
+                    <div className="w-4 h-4 bg-slate-200 rounded-full flex items-center justify-center text-[10px] text-slate-400 font-bold">•</div>
+                  ) : verificationStage === 'checking_drive' ? (
+                    <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  ) : (
+                    <div className="w-4 h-4 bg-emerald-500 rounded-full flex items-center justify-center text-white text-[9px] font-bold">✓</div>
+                  )}
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold text-slate-700">Google Drive Mappings</h5>
+                  <p className="text-[10px] text-slate-400">
+                    {verificationStage === 'verifying_google' ? 'Waiting for identity...' :
+                     verificationStage === 'checking_drive' ? 'Scanning Drive partition allocations...' :
+                     'Drive configuration active'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 3: Metadata Streaming */}
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 flex-shrink-0">
+                  {verificationStage === 'verifying_google' || verificationStage === 'checking_drive' ? (
+                    <div className="w-4 h-4 bg-slate-200 rounded-full flex items-center justify-center text-[10px] text-slate-400 font-bold">•</div>
+                  ) : (
+                    <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                  )}
+                </div>
+                <div>
+                  <h5 className="text-xs font-bold text-slate-700">Data Stream Integration</h5>
+                  <p className="text-[10px] text-slate-400">
+                    {verificationStage === 'linking_drive' ? 'Mounting CloudSphere root workspace namespace...' :
+                     verificationStage === 'fetching_drive_details' ? 'Syncing files, quotas & personal resources...' :
+                     'Waiting for Drive mapping...'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400 font-bold uppercase mt-4 tracking-wider animate-pulse">
+              {verificationStage === 'verifying_google' ? 'Authorizing Google credentials...' :
+               verificationStage === 'checking_drive' ? 'Querying workspace partition...' :
+               'Synchronizing storage resources...'}
+            </p>
           </div>
-          <h1 className="text-xl font-bold text-indigo-600">CloudSphere</h1>
-          <p className="text-slate-500 text-sm mt-1">Unlock your digital vault</p>
-        </div>
+        ) : verificationStage === 'drive_not_linked' && connectingUser ? (
+          /* Drive Not Associated Screen */
+          <div className="animate-fade-in text-left">
+            <div className="flex flex-col items-center mb-6">
+              <img 
+                src={connectingUser.avatar} 
+                alt={connectingUser.name} 
+                className="w-16 h-16 rounded-full object-cover border-4 border-indigo-50 shadow-md"
+              />
+              <h3 className="font-bold text-slate-800 text-sm mt-2">{connectingUser.name}</h3>
+              <p className="text-slate-400 text-xs">{connectingUser.email}</p>
+            </div>
 
-        {/* Premium Role Selection Toggle */}
-        <div className="bg-slate-100 p-1.5 rounded-2xl flex gap-1 mb-6">
-          <button
-            type="button"
-            onClick={() => handleRoleChange('user')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              selectedRole === 'user'
-                ? 'bg-white text-slate-800 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <User size={14} />
-            Standard User
-          </button>
-          <button
-            type="button"
-            onClick={() => handleRoleChange('superadmin')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-              selectedRole === 'superadmin'
-                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/10'
-                : 'text-slate-500 hover:text-slate-700'
-            }`}
-          >
-            <Shield size={14} />
-            Super Admin
-          </button>
-        </div>
+            <div className="bg-amber-50/60 border border-amber-200/50 rounded-3xl p-5 mb-6 flex gap-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-2xl flex items-center justify-center text-amber-600 flex-shrink-0">
+                <HardDrive size={20} />
+              </div>
+              <div>
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider">Drive Link Required</h4>
+                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                  Your Google Identity is verified, but this account has no Google Drive link registered. Link it to fetch personalized workspace details.
+                </p>
+              </div>
+            </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-slate-700">Email Address</label>
-            <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-              <input 
-                type="email" 
-                placeholder="name@example.com"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  if (e.target.value.trim().toLowerCase() === 'superadmin@cloudsphere.io') {
-                    setSelectedRole('superadmin');
-                  } else {
-                    setSelectedRole('user');
-                  }
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => handleLinkDriveAndLogin(connectingUser)}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-5 rounded-2xl text-xs transition-all shadow-md shadow-indigo-600/10 cursor-pointer text-center"
+              >
+                Link Google Drive & Login
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleContinueWithoutDrive(connectingUser)}
+                className="w-full bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 font-bold py-3.5 px-5 rounded-2xl text-xs transition-all cursor-pointer text-center"
+              >
+                Continue Without Drive Integration
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setConnectingUser(null);
+                  setVerificationStage('idle');
                 }}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all text-slate-700 placeholder:text-slate-400 font-medium"
-              />
+                className="w-full text-center text-xs font-bold text-slate-400 hover:text-slate-600 cursor-pointer pt-2"
+              >
+                ← Back to profile list
+              </button>
             </div>
           </div>
+        ) : !isPickerOpen ? (
+          /* Welcome Launch Screen */
+          <div className="flex flex-col items-center">
+            {/* Branding Sphere */}
+            <div className="relative mb-6">
+              <div className="w-20 h-20 bg-indigo-600 rounded-[2rem] flex items-center justify-center shadow-xl shadow-indigo-600/20 relative z-10">
+                <Cloud className="text-white w-10 h-10" />
+              </div>
+              <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-[2.2rem] blur opacity-30 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-pulse"></div>
+            </div>
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-700">Password</label>
-              <a href="#" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">Forgot password?</a>
-            </div>
-            <div className="relative">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-              <input 
-                type="password" 
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 transition-all text-slate-700 placeholder:text-slate-400 font-medium"
-              />
-            </div>
-          </div>
+            <h1 className="text-2xl font-black text-slate-800 tracking-tight">CloudSphere</h1>
+            <p className="text-slate-500 text-xs mt-1 text-center font-medium max-w-xs">
+              Synchronize your workspace using encrypted Google Drive storage allocations.
+            </p>
 
-          <div className="flex items-center justify-between pt-1">
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="remember" defaultChecked className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-600" />
-              <label htmlFor="remember" className="text-sm text-slate-600">Remember session</label>
+            {/* Live Integration Toggle Option */}
+            <div className="w-full my-6 flex flex-col gap-3">
+              <div className="flex bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setUseLiveGoogle(false)}
+                  className={`flex-1 py-2 text-center rounded-xl font-bold text-[11px] uppercase tracking-wider transition-all cursor-pointer ${
+                    !useLiveGoogle 
+                      ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/50' 
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  ⚡ Sandbox Mode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUseLiveGoogle(true)}
+                  className={`flex-1 py-2 text-center rounded-xl font-bold text-[11px] uppercase tracking-wider transition-all cursor-pointer ${
+                    useLiveGoogle 
+                      ? 'bg-indigo-600 text-white shadow-md' 
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  ☁ Live Google Drive
+                </button>
+              </div>
+
+              {useLiveGoogle && (
+                <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4 animate-fade-in text-left">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide">Google Cloud OAuth ID</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowClientIdInfo(!showClientIdInfo)}
+                      className="text-indigo-500 hover:text-indigo-700 transition-colors"
+                      title="How to get a client ID"
+                    >
+                      <HelpCircle size={14} />
+                    </button>
+                  </div>
+                  
+                  {showClientIdInfo && (
+                    <div className="text-[10px] text-indigo-900 leading-relaxed mb-3 bg-white p-3 rounded-xl border border-indigo-100/50 animate-fade-in shadow-[0_4px_12px_rgba(90,81,230,0.03)]">
+                      <p className="font-bold mb-1">To get your Google Client ID:</p>
+                      <ol className="list-decimal list-inside space-y-0.5">
+                        <li>Go to Google Cloud Console.</li>
+                        <li>Create a project & enable <strong>Google Drive API</strong>.</li>
+                        <li>Create OAuth consent screen (External, add scope: <code>.../auth/drive.readonly</code>).</li>
+                        <li>Create OAuth client ID (Web application) & set Authorized JavaScript origins to <code>http://localhost:5173</code> (or your current port).</li>
+                        <li>Copy the Client ID and paste it below.</li>
+                      </ol>
+                    </div>
+                  )}
+
+                  <input
+                    type="text"
+                    value={googleClientId}
+                    onChange={(e) => setGoogleClientId(e.target.value)}
+                    placeholder="Enter client-id.apps.googleusercontent.com"
+                    className="w-full px-3 py-2 bg-white border border-indigo-200 focus:border-indigo-600 focus:outline-none rounded-xl text-xs text-slate-800 placeholder-slate-400 shadow-sm"
+                  />
+                  {errorMessage && (
+                    <p className="text-[10px] font-semibold text-rose-600 mt-2 bg-rose-50 border border-rose-100 p-2 rounded-lg leading-relaxed flex items-start gap-1">
+                      <ShieldAlert size={12} className="flex-shrink-0 mt-0.5" />
+                      <span>{errorMessage}</span>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-            {selectedRole === 'superadmin' && (
-              <span className="flex items-center gap-1 text-xs text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100">
-                <ShieldAlert size={12} />
-                Admin Credentials
-              </span>
+
+            {/* Principal authentic login trigger */}
+            {useLiveGoogle ? (
+              <button
+                type="button"
+                onClick={handleLiveGoogleLogin}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-2xl shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/25 active:scale-[0.99] cursor-pointer flex items-center justify-center gap-3 text-sm group transition-all"
+              >
+                <GoogleIcon />
+                <span>Continue with Google Drive</span>
+                <span className="text-white/60 group-hover:translate-x-0.5 transition-transform">→</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsPickerOpen(true)}
+                className="w-full bg-white hover:bg-slate-50 text-slate-700 font-bold py-4 px-6 rounded-2xl border border-slate-200 shadow-sm transition-all hover:shadow-md active:scale-[0.99] cursor-pointer flex items-center justify-center gap-3 text-sm group"
+              >
+                <GoogleIcon />
+                <span>Select Account (Sandbox)</span>
+                <span className="text-slate-400 group-hover:translate-x-0.5 transition-transform">→</span>
+              </button>
             )}
+
+            <div className="mt-8 flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-slate-100 px-3 py-1 rounded-full">
+              <Sparkles size={10} className="text-indigo-500" />
+              Direct OAuth 2.0 Access
+            </div>
           </div>
+        ) : isCustomSignInOpen ? (
+          /* Sandbox Custom User Sign In Form */
+          <div className="animate-fade-in">
+            <div className="flex justify-center mb-6">
+              <span className="text-2xl font-bold tracking-tight">
+                <span className="text-[#4285F4]">G</span>
+                <span className="text-[#EA4335]">o</span>
+                <span className="text-[#FBBC05]">o</span>
+                <span className="text-[#4285F4]">g</span>
+                <span className="text-[#34A853]">l</span>
+                <span className="text-[#EA4335]">e</span>
+              </span>
+            </div>
 
-          <button 
-            type="submit" 
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl transition-all mt-4 shadow-lg shadow-indigo-600/20 active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
-          >
-            Sign In as {selectedRole === 'superadmin' ? 'Super Admin' : 'Standard User'} <span className="text-lg">→</span>
-          </button>
-        </form>
+            <div className="text-center mb-8">
+              <h2 className="text-2xl font-normal text-slate-800">Sign in</h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Use your Google Account to connect to <span className="font-semibold text-indigo-600">CloudSphere</span>
+              </p>
+            </div>
 
-        <div className="mt-6 flex items-center justify-center space-x-4 before:h-px before:bg-slate-200 before:flex-1 after:h-px after:bg-slate-200 after:flex-1">
-          <span className="text-[10px] text-slate-400 font-bold px-2 uppercase tracking-wider">or continue with</span>
-        </div>
+            <form onSubmit={handleCreateCustomAccount} className="space-y-4">
+              <div>
+                <input
+                  type="email"
+                  required
+                  value={customEmail}
+                  onChange={(e) => setCustomEmail(e.target.value)}
+                  placeholder="Email address (e.g. name@gmail.com)"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition-all placeholder-slate-400"
+                />
+              </div>
 
-        <div className="grid grid-cols-2 gap-4 mt-4">
-          <button 
-            type="button"
-            onClick={handleThirdPartyLogin}
-            className="flex items-center justify-center gap-2 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-sm font-medium rounded-xl transition-colors cursor-pointer border border-slate-200/50"
-          >
-            Google
-          </button>
-          <button 
-            type="button"
-            onClick={handleThirdPartyLogin}
-            className="flex items-center justify-center gap-2 py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-sm font-medium rounded-xl transition-colors cursor-pointer border border-slate-200/50"
-          >
-            Apple
-          </button>
-        </div>
+              <div>
+                <input
+                  type="text"
+                  required
+                  value={customName}
+                  onChange={(e) => setCustomName(e.target.value)}
+                  placeholder="Full name"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:border-indigo-600 focus:bg-white transition-all placeholder-slate-400"
+                />
+              </div>
 
-        <p className="text-center text-xs text-slate-500 mt-6">
-          Selected Account Role: <span className="font-bold text-indigo-600 capitalize">{selectedRole}</span>
-        </p>
-      </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Workspace Role</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setCustomRole('user')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                      customRole === 'user'
+                        ? 'bg-indigo-50 border-indigo-600 text-indigo-700 shadow-sm'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Standard Member
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCustomRole('superadmin')}
+                    className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer text-center ${
+                      customRole === 'superadmin'
+                        ? 'bg-amber-50 border-amber-600 text-amber-700 shadow-sm'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Super Admin
+                  </button>
+                </div>
+              </div>
 
-      <div className="absolute bottom-8 right-8 text-slate-400 hover:text-slate-600 cursor-pointer z-10 bg-white p-2.5 rounded-full shadow-sm border border-slate-100">
-        <HelpCircle size={20} />
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Choose Profile Icon</label>
+                <div className="flex gap-3 justify-center py-1">
+                  {presetAvatars.map((av, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setCustomAvatar(av)}
+                      className={`relative rounded-full border-2 transition-all p-0.5 cursor-pointer ${
+                        customAvatar === av ? 'border-indigo-600 scale-110 shadow-md' : 'border-transparent opacity-60 hover:opacity-100'
+                      }`}
+                    >
+                      <img src={av} alt="Avatar option" className="w-9 h-9 rounded-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsCustomSignInOpen(false)}
+                  className="text-xs font-bold text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  ← Back to list
+                </button>
+                <button
+                  type="submit"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-6 rounded-xl text-xs shadow-md shadow-indigo-600/10 cursor-pointer active:scale-95 transition-all"
+                >
+                  Next
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : (
+          /* Sandbox Accounts List Picker */
+          <div>
+            <div className="flex items-center gap-3 mb-6">
+              <GoogleIcon />
+              <div>
+                <h2 className="font-bold text-slate-800 text-base">Choose an account</h2>
+                <p className="text-xs text-slate-500">to continue to <span className="font-bold text-indigo-600">CloudSphere</span></p>
+              </div>
+            </div>
+
+            <div className="divide-y divide-slate-100 max-h-[280px] overflow-y-auto pr-1">
+              {profiles.map((profile) => (
+                <button
+                  key={profile.email}
+                  type="button"
+                  onClick={() => handleSelectProfile(profile)}
+                  className="w-full flex items-center gap-4 py-3.5 px-3 hover:bg-slate-50 rounded-2xl transition-colors text-left group cursor-pointer animate-fade-in"
+                >
+                  <img 
+                    src={profile.avatar} 
+                    alt={profile.name} 
+                    className="w-10 h-10 rounded-full object-cover border border-slate-100"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <h4 className="font-bold text-sm text-slate-800 truncate">{profile.name}</h4>
+                      {profile.role === 'superadmin' ? (
+                        <span className="flex items-center gap-0.5 text-[9px] bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded font-black border border-amber-100">
+                          <Shield size={8} /> ADMIN
+                        </span>
+                      ) : (
+                        <span className="text-[9px] bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-black border border-indigo-100">
+                          MEMBER
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500 truncate mt-0.5">{profile.email}</p>
+                  </div>
+                  <span className="text-slate-300 group-hover:text-slate-500 transition-colors text-lg font-bold">
+                    ›
+                  </span>
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setIsCustomSignInOpen(true)}
+                className="w-full flex items-center gap-4 py-4 px-3 hover:bg-slate-50 rounded-2xl transition-colors text-left cursor-pointer text-slate-500 text-xs font-semibold"
+              >
+                <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-bold">
+                  ＋
+                </div>
+                <span>Use another account</span>
+              </button>
+            </div>
+
+            <div className="mt-6 pt-6 border-t border-slate-100">
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                To continue, Google will share your name, email address, and profile picture with CloudSphere. CloudSphere will also receive permissions to access files metadata stored in your Google Drive.
+              </p>
+              
+              <button
+                type="button"
+                onClick={() => setIsPickerOpen(false)}
+                className="mt-4 text-xs font-bold text-indigo-600 hover:text-indigo-700 cursor-pointer"
+              >
+                ← Back to launchscreen
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
-  );
-}
-
-function HelpCircle({ size, className }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <circle cx="12" cy="12" r="10"></circle>
-      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-      <line x1="12" y1="17" x2="12.01" y2="17"></line>
-    </svg>
   );
 }

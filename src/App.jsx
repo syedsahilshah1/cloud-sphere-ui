@@ -15,13 +15,35 @@ function App() {
   React.useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'l' && e.ctrlKey) {
-        setUser(prev => prev ? null : { email: 'superadmin@cloudsphere.io', role: 'superadmin', name: 'Super Admin' });
+        setUser(prev => prev ? null : { 
+          email: 'sahilkhan536ah@gmail.com', 
+          role: 'superadmin', 
+          name: 'Sahil Shah',
+          avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80'
+        });
       }
       if (e.key === 'u' && e.ctrlKey) setIsUploadOpen(prev => !prev);
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
+
+  const handleUserUpdate = (updatedUserData) => {
+    setUser(updatedUserData);
+    const accountsStr = localStorage.getItem('cs_google_accounts');
+    if (accountsStr) {
+      try {
+        const accounts = JSON.parse(accountsStr);
+        const index = accounts.findIndex(acc => acc.email === updatedUserData.email);
+        if (index !== -1) {
+          accounts[index] = { ...accounts[index], ...updatedUserData };
+          localStorage.setItem('cs_google_accounts', JSON.stringify(accounts));
+        }
+      } catch (err) {
+        console.error('Failed to update persisted user accounts:', err);
+      }
+    }
+  };
 
   const handleLogin = (userData) => {
     setUser(userData);
@@ -45,6 +67,7 @@ function App() {
         <>
           <Dashboard 
             user={user}
+            onUserUpdate={handleUserUpdate}
             activeTab={activeTab}
             setActiveTab={(tab) => {
               setActiveTab(tab);

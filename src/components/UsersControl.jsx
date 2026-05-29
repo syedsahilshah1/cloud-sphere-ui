@@ -22,11 +22,16 @@ export default function UsersControl() {
   const [editStatus, setEditStatus] = useState('active');
 
   const defaultMockUsers = [
-    { id: '1', name: 'Super Admin', email: 'superadmin@cloudsphere.io', role: 'superadmin', status: 'active', storage: '2 TB', avatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80', joined: 'Oct 01, 2025' },
-    { id: '2', name: 'KC Developer', email: 'kc@cloudsphere.io', role: 'user', status: 'active', storage: '500 GB', avatar: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=150&q=80', joined: 'Oct 12, 2025' },
-    { id: '3', name: 'Jessica Mitchell', email: 'jessica.m@cloudsphere.io', role: 'user', status: 'active', storage: '1 TB', avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80', joined: 'Oct 05, 2025' },
-    { id: '4', name: 'Michael Evans', email: 'm.evans@cloudsphere.io', role: 'user', status: 'suspended', storage: '2 TB', avatar: 'https://images.unsplash.com/photo-1599566150163-29194dcaad36?auto=format&fit=crop&w=150&q=80', joined: 'Sep 28, 2025' },
-    { id: '5', name: 'Sarah Connor', email: 's.connor@cloudsphere.io', role: 'user', status: 'pending', storage: '100 GB', avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=150&q=80', joined: 'Nov 02, 2025' },
+    { 
+      id: 'sahilkhan-superadmin-id', 
+      name: 'Sahil Khan', 
+      email: 'sahilkhan536ah@gmail.com', 
+      role: 'superadmin', 
+      status: 'active', 
+      storage: '2 TB', 
+      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', 
+      joined: 'May 29, 2026' 
+    }
   ];
 
   const fetchUsers = async () => {
@@ -39,26 +44,88 @@ export default function UsersControl() {
         .from('profiles')
         .select('*');
 
+      const defaultAdmin = { 
+        id: 'sahilkhan-superadmin-id', 
+        name: 'Sahil Shah', 
+        email: 'sahilkhan536ah@gmail.com', 
+        role: 'superadmin', 
+        status: 'active', 
+        storage: '2 TB', 
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', 
+        joined: 'May 29, 2026' 
+      };
+
       if (error) {
         // If the table doesn't exist, we fallback to mock data
         console.warn("Supabase profiles table not found, fallback to simulated memory storage:", error.message);
         const stored = localStorage.getItem('cs_simulated_users');
+        let list = [];
         if (stored) {
-          setUsers(JSON.parse(stored));
+          try {
+            list = JSON.parse(stored);
+            // Filter out default credentials to keep list clean
+            list = list.filter(u => 
+              u.email !== 'kc@cloudsphere.io' && 
+              u.email !== 'superadmin@cloudsphere.io' && 
+              u.email !== 'jessica.m@cloudsphere.io' && 
+              u.email !== 'm.evans@cloudsphere.io' && 
+              u.email !== 's.connor@cloudsphere.io'
+            );
+            // Ensure Sahil Khan exists in list
+            const hasSahil = list.some(u => u.email === 'sahilkhan536ah@gmail.com');
+            if (!hasSahil) {
+              list.unshift(defaultAdmin);
+            } else {
+              // Force Sahil to be superadmin and active
+              list = list.map(u => {
+                if (u.email === 'sahilkhan536ah@gmail.com') {
+                  return { ...u, role: 'superadmin', status: 'active' };
+                }
+                return u;
+              });
+            }
+          } catch (e) {
+            list = [defaultAdmin];
+          }
         } else {
-          setUsers(defaultMockUsers);
-          localStorage.setItem('cs_simulated_users', JSON.stringify(defaultMockUsers));
+          list = [defaultAdmin];
         }
+        setUsers(list);
+        localStorage.setItem('cs_simulated_users', JSON.stringify(list));
       } else if (data && data.length > 0) {
-        setUsers(data);
+        let list = [...data];
+        // Enforce Sahil Khan presence and role security even if pulled from remote DB
+        const hasSahil = list.some(u => u.email === 'sahilkhan536ah@gmail.com');
+        if (!hasSahil) {
+          list.unshift(defaultAdmin);
+        } else {
+          list = list.map(u => {
+            if (u.email === 'sahilkhan536ah@gmail.com') {
+              return { ...u, role: 'superadmin', status: 'active' };
+            }
+            return u;
+          });
+        }
+        setUsers(list);
       } else {
         // Table exists but is empty
-        setUsers(defaultMockUsers);
-        localStorage.setItem('cs_simulated_users', JSON.stringify(defaultMockUsers));
+        const list = [defaultAdmin];
+        setUsers(list);
+        localStorage.setItem('cs_simulated_users', JSON.stringify(list));
       }
     } catch (err) {
       console.error("Error loading users:", err);
-      setUsers(defaultMockUsers);
+      const defaultAdmin = { 
+        id: 'sahilkhan-superadmin-id', 
+        name: 'Sahil Shah', 
+        email: 'sahilkhan536ah@gmail.com', 
+        role: 'superadmin', 
+        status: 'active', 
+        storage: '2 TB', 
+        avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', 
+        joined: 'May 29, 2026' 
+      };
+      setUsers([defaultAdmin]);
     } finally {
       setLoading(false);
     }
@@ -120,6 +187,15 @@ export default function UsersControl() {
   };
 
   const handleUpdateRoleAndStatus = async (userId) => {
+    const targetUser = users.find(u => u.id === userId);
+    if (targetUser && targetUser.email === 'sahilkhan536ah@gmail.com') {
+      if (editRole !== 'superadmin' || editStatus !== 'active') {
+        alert("Critical Security Override: The primary workspace administrator (sahilkhan536ah@gmail.com) cannot be demoted or deactivated.");
+        setEditingUserId(null);
+        return;
+      }
+    }
+
     const updated = users.map(u => {
       if (u.id === userId) {
         return { ...u, role: editRole, status: editStatus };
@@ -143,6 +219,12 @@ export default function UsersControl() {
   };
 
   const handleDeleteUser = async (userId) => {
+    const targetUser = users.find(u => u.id === userId);
+    if (targetUser && targetUser.email === 'sahilkhan536ah@gmail.com') {
+      alert("Critical Protection Lock: The primary workspace administrator (sahilkhan536ah@gmail.com) cannot be deleted under any circumstances.");
+      return;
+    }
+
     if (!window.confirm("Are you sure you want to delete this user's account? All sync links will be revoked.")) return;
 
     const updated = users.filter(u => u.id !== userId);
@@ -161,6 +243,11 @@ export default function UsersControl() {
   };
 
   const toggleUserStatusDirect = async (user) => {
+    if (user.email === 'sahilkhan536ah@gmail.com') {
+      alert("Critical Protection Lock: The primary workspace administrator (sahilkhan536ah@gmail.com) status cannot be modified.");
+      return;
+    }
+
     const nextStatus = user.status === 'active' ? 'suspended' : 'active';
     const updated = users.map(u => {
       if (u.id === user.id) return { ...u, status: nextStatus };
@@ -537,7 +624,7 @@ export default function UsersControl() {
                 <input 
                   type="email"
                   required
-                  placeholder="name@cloudsphere.io"
+                  placeholder="name@example.com"
                   value={newUser.email}
                   onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600/20 focus:border-indigo-600 text-slate-800 font-semibold"

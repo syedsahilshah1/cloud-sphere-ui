@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import MainLayout from '../layouts/MainLayout';
 import FileCard from '../components/FileCard';
 import GoogleDriveCard from '../components/GoogleDriveCard';
 import UsersControl from '../components/UsersControl';
+import { supabase } from '../lib/supabaseClient';
+import { fetchRealGoogleDriveFiles } from '../lib/googleDriveClient';
 import { 
   LayoutGrid, List, SortAsc, Upload, Users, Trash2, 
   Database, RefreshCw, FolderOpen, ArrowUpDown, ChevronRight,
-  Shield, CheckCircle, Info, ExternalLink
+  Shield, CheckCircle, Info, ExternalLink, CloudLightning, HardDrive
 } from 'lucide-react';
 
 const myFilesList = [
@@ -49,9 +51,9 @@ const recentFiles = [
   { id: 6, name: 'Brand-Intro-Video.mp4', type: 'video', modified: 'Oct 10, 2023', size: '128 MB', members: ['AS', 'KK', 'RT'] },
 ];
 
-const gdriveFiles = [
+const gdriveMockFiles = [
   {
-    id: 11,
+    id: 'mock-11',
     name: 'Brand_Identity_v2.pdf',
     type: 'pdf',
     modified: '2h ago',
@@ -59,7 +61,7 @@ const gdriveFiles = [
     previewUrl: ''
   },
   {
-    id: 12,
+    id: 'mock-12',
     name: 'Hero_Section_Draft.jpg',
     type: 'jpg',
     modified: '5h ago',
@@ -67,7 +69,7 @@ const gdriveFiles = [
     previewUrl: 'https://images.unsplash.com/photo-1601758228041-f3b2795255f1?auto=format&fit=crop&w=400&q=80'
   },
   {
-    id: 13,
+    id: 'mock-13',
     name: 'Content_Strategy.docx',
     type: 'docx',
     modified: 'yesterday',
@@ -75,7 +77,7 @@ const gdriveFiles = [
     previewUrl: ''
   },
   {
-    id: 14,
+    id: 'mock-14',
     name: 'Transparent_Logo.png',
     type: 'png',
     modified: '3d ago',
@@ -83,7 +85,7 @@ const gdriveFiles = [
     previewUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=400&q=80'
   },
   {
-    id: 15,
+    id: 'mock-15',
     name: 'Presentation_Video.mp4',
     type: 'mp4',
     modified: '1w ago',
@@ -91,7 +93,7 @@ const gdriveFiles = [
     previewUrl: ''
   },
   {
-    id: 16,
+    id: 'mock-16',
     name: 'Meeting_Notes.txt',
     type: 'txt',
     modified: 'yesterday',
@@ -99,7 +101,7 @@ const gdriveFiles = [
     previewUrl: ''
   },
   {
-    id: 17,
+    id: 'mock-17',
     name: 'Desktop_Wallpaper.jpg',
     type: 'jpg',
     modified: '2w ago',
@@ -107,7 +109,7 @@ const gdriveFiles = [
     previewUrl: 'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?auto=format&fit=crop&w=400&q=80'
   },
   {
-    id: 18,
+    id: 'mock-18',
     name: 'Q3_Financials.pdf',
     type: 'pdf',
     modified: '1mo ago',
@@ -124,10 +126,105 @@ export default function Dashboard({
   onUpgradeClick,
   searchQuery, 
   setSearchQuery,
-  user
+  user,
+  onUserUpdate
 }) {
   const [sortOrder, setSortOrder] = useState('name-asc');
   const [viewType, setViewType] = useState('grid'); // grid or list
+  const [linkingState, setLinkingState] = useState('idle'); // idle, oauth, partition, syncing, completed
+  
+  // Real Google Drive integration states
+  const [driveFiles, setDriveFiles] = useState(gdriveMockFiles);
+  const [syncedFileIds, setSyncedFileIds] = useState([]);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+  // Load files and synced status
+  const fetchSyncedFiles = async () => {
+    if (!user) return;
+    try {
+      const { data, error } = await supabase
+        .from('drive_files')
+        .select('drive_file_id');
+      
+      if (error) throw error;
+      if (data) {
+        setSyncedFileIds(data.map(f => f.drive_file_id));
+      }
+    } catch (err) {
+      console.warn("Supabase select sync files failed. Falling back to local storage:", err.message);
+      const stored = localStorage.getItem(`cs_synced_files_${user.email}`) || '[]';
+      try {
+        setSyncedFileIds(JSON.parse(stored));
+      } catch (e) {}
+    }
+  };
+
+  const loadDriveFiles = async () => {
+    if (!user) return;
+    
+    // Always fetch synced IDs first
+    await fetchSyncedFiles();
+
+    if (user.isDriveLinked && user.accessToken) {
+      setIsLoadingFiles(true);
+      try {
+        const files = await fetchRealGoogleDriveFiles(user.accessToken);
+        setDriveFiles(files);
+      } catch (err) {
+        console.warn("Could not retrieve real Google Drive files (token may have expired). Falling back to sandbox:", err);
+        setDriveFiles(gdriveMockFiles);
+      } finally {
+        setIsLoadingFiles(false);
+      }
+    } else {
+      setDriveFiles(gdriveMockFiles);
+    }
+  };
+
+  useEffect(() => {
+    loadDriveFiles();
+  }, [user, activeTab]);
+
+  // Sync / Unsync handler
+  const handleSyncToggle = async (file) => {
+    if (!user) return;
+    const isCurrentlySynced = syncedFileIds.includes(file.id);
+    let nextSyncedIds;
+
+    if (isCurrentlySynced) {
+      nextSyncedIds = syncedFileIds.filter(id => id !== file.id);
+      try {
+        const { error } = await supabase
+          .from('drive_files')
+          .delete()
+          .eq('drive_file_id', file.id);
+        
+        if (error) throw error;
+      } catch (err) {
+        console.warn("Supabase database delete failed:", err.message);
+      }
+    } else {
+      nextSyncedIds = [...syncedFileIds, file.id];
+      try {
+        const { error } = await supabase
+          .from('drive_files')
+          .insert({
+            user_id: user.googleUserId || user.email,
+            file_name: file.name,
+            mime_type: file.type || 'unknown',
+            size: file.size || '0 KB',
+            drive_file_id: file.id
+          });
+        
+        if (error) throw error;
+      } catch (err) {
+        console.warn("Supabase database insert failed:", err.message);
+      }
+    }
+
+    setSyncedFileIds(nextSyncedIds);
+    localStorage.setItem(`cs_synced_files_${user.email}`, JSON.stringify(nextSyncedIds));
+  };
 
   // Sort files helper
   const sortFiles = (files) => {
@@ -155,9 +252,95 @@ export default function Dashboard({
     else setSortOrder('name-asc');
   };
 
+  const startLinkingFlow = () => {
+    setLinkingState('oauth');
+    setTimeout(() => {
+      setLinkingState('partition');
+      setTimeout(() => {
+        setLinkingState('syncing');
+        setTimeout(() => {
+          setLinkingState('completed');
+          setTimeout(() => {
+            if (onUserUpdate) {
+              onUserUpdate({ ...user, isDriveLinked: true });
+            }
+            setLinkingState('idle');
+          }, 800);
+        }, 1200);
+      }, 1200);
+    }, 1200);
+  };
+
   // Google Drive render
   const renderGoogleDrive = () => {
-    const filteredFiles = gdriveFiles.filter(file => 
+    if (!user?.isDriveLinked) {
+      return (
+        <div className="max-w-4xl mx-auto py-12 flex flex-col items-center justify-center min-h-[60vh]">
+          {linkingState === 'idle' ? (
+            <div className="bg-white rounded-[2.5rem] p-10 border border-slate-100 shadow-[0_20px_50px_rgba(0,0,0,0.02)] flex flex-col items-center text-center max-w-lg w-full animate-fade-in">
+              <div className="relative mb-8 group">
+                <div className="w-20 h-20 bg-indigo-50 rounded-[2rem] flex items-center justify-center relative z-10 transition-all duration-500 group-hover:scale-105 group-hover:rotate-6">
+                  <Database className="text-indigo-600 w-10 h-10 stroke-[1.5]" />
+                </div>
+                <div className="absolute -inset-1.5 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-[2.2rem] blur opacity-15 group-hover:opacity-30 transition duration-500 animate-pulse"></div>
+              </div>
+
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">Google Drive Unlinked</h2>
+              <p className="text-slate-500 text-xs mt-3 mb-8 leading-relaxed font-medium max-w-sm">
+                To access configuration rules, storage allocations, and team cloud storage, you must authorize CloudSphere to map a partition within your Google Drive.
+              </p>
+
+              <button
+                onClick={startLinkingFlow}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-2xl shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-3 text-sm group"
+              >
+                <span>Authorize Google Drive Partition</span>
+                <span className="text-white/60 group-hover:translate-x-0.5 transition-transform">→</span>
+              </button>
+
+              <div className="mt-8 flex items-center gap-1.5 text-[10px] text-slate-400 font-bold uppercase tracking-wider bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
+                <Shield size={10} className="text-emerald-500" />
+                Zero-Trust Encryption Mapping
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-[2.5rem] p-10 border border-slate-100 shadow-[0_20px_50px_rgba(0,0,0,0.02)] flex flex-col items-center text-center max-w-lg w-full animate-fade-in">
+              <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mb-6 animate-spin">
+                <RefreshCw size={24} className="stroke-[1.5]" />
+              </div>
+              
+              <h3 className="font-extrabold text-slate-800 text-sm mb-2 uppercase tracking-wider">
+                {linkingState === 'oauth' && 'Establishing OAuth Channel'}
+                {linkingState === 'partition' && 'Creating Drive Partition'}
+                {linkingState === 'syncing' && 'Synchronizing Metadata'}
+                {linkingState === 'completed' && 'Connection Finalized!'}
+              </h3>
+              
+              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden mb-6 max-w-xs">
+                <div 
+                  className="bg-indigo-600 h-full rounded-full transition-all duration-300"
+                  style={{
+                    width: 
+                      linkingState === 'oauth' ? '25%' :
+                      linkingState === 'partition' ? '50%' :
+                      linkingState === 'syncing' ? '75%' : '100%'
+                  }}
+                ></div>
+              </div>
+
+              <p className="text-xs text-slate-500 max-w-xs leading-relaxed font-medium">
+                {linkingState === 'oauth' && 'Validating secure credentials and scope authorization limits...'}
+                {linkingState === 'partition' && 'Mapping virtual directory structures on your Google Workspace root...'}
+                {linkingState === 'syncing' && 'Downloading template models, layout guidelines, and asset packages...'}
+                {linkingState === 'completed' && 'Synchronized successfully. Redirecting to workspace...'}
+              </p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const filteredFiles = driveFiles.filter(file => 
       file.name.toLowerCase().includes((searchQuery || '').toLowerCase())
     );
     const sortedFiles = sortFiles(filteredFiles);
@@ -196,10 +379,21 @@ export default function Dashboard({
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
           {/* Main Grid */}
           <div className="xl:col-span-3">
-            {sortedFiles.length > 0 ? (
+            {isLoadingFiles ? (
+              <div className="bg-white rounded-3xl p-24 text-center border border-slate-100 shadow-sm flex flex-col items-center justify-center">
+                <RefreshCw size={36} className="text-indigo-600 animate-spin mb-4" />
+                <h4 className="font-bold text-slate-800 text-sm">Streaming files from Google Drive...</h4>
+                <p className="text-slate-400 text-xs mt-1">Connecting to official Google REST endpoint</p>
+              </div>
+            ) : sortedFiles.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {sortedFiles.map(file => (
-                  <GoogleDriveCard key={file.id} file={file} />
+                  <GoogleDriveCard 
+                    key={file.id} 
+                    file={file} 
+                    isSynced={syncedFileIds.includes(file.id)}
+                    onSyncToggle={handleSyncToggle}
+                  />
                 ))}
               </div>
             ) : (
@@ -248,6 +442,9 @@ export default function Dashboard({
 
   // Default My Files render
   const renderMyFiles = () => {
+    // Get currently synced files to display them directly
+    const syncedDriveFilesList = driveFiles.filter(f => syncedFileIds.includes(f.id));
+
     return (
       <div className="max-w-6xl mx-auto">
         <div className="flex items-center justify-between mb-6">
@@ -267,6 +464,30 @@ export default function Dashboard({
             <FileCard key={file.id} file={file} />
           ))}
         </div>
+
+        {/* Sync assets dynamically retrieved from Supabase drive_files */}
+        {syncedDriveFilesList.length > 0 && (
+          <div className="mb-12 animate-fade-in">
+            <div className="flex items-center gap-2.5 mb-6">
+              <CloudLightning className="text-indigo-600 w-6 h-6 stroke-[2]" />
+              <h2 className="text-2xl font-bold text-slate-800">Synced Drive Assets</h2>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-100">
+                ACTIVE SUPABASE SYNC
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {syncedDriveFilesList.map(file => (
+                <GoogleDriveCard 
+                  key={file.id} 
+                  file={file} 
+                  isSynced={true}
+                  onSyncToggle={handleSyncToggle}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-slate-800">Recent Files</h2>

@@ -1,8 +1,15 @@
 import React from 'react';
-import { MoreVertical, FileText, FileCode, Film, Eye } from 'lucide-react';
+import { MoreVertical, FileText, FileCode, Film, Eye, CloudLightning, CheckCircle } from 'lucide-react';
 
-export default function GoogleDriveCard({ file, onMenuClick }) {
-  const hasPreview = file.type === 'jpg' || file.type === 'png';
+export default function GoogleDriveCard({ file, isSynced, onSyncToggle, onMenuClick }) {
+  const hasPreview = file.type === 'jpg' || file.type === 'png' || (file.previewUrl && file.previewUrl.startsWith('http'));
+
+  const handleSyncClick = (e) => {
+    e.stopPropagation();
+    if (onSyncToggle) {
+      onSyncToggle(file);
+    }
+  };
 
   return (
     <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.015)] hover:shadow-[0_12px_40px_rgba(90,81,230,0.08)] hover:border-slate-200/60 transition-all duration-300 overflow-hidden flex flex-col group h-64 select-none relative">
@@ -39,6 +46,28 @@ export default function GoogleDriveCard({ file, onMenuClick }) {
           </div>
         )}
         
+        {/* Top-left Sync Action Badge */}
+        <button
+          onClick={handleSyncClick}
+          className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1.5 rounded-full shadow-md select-none tracking-wider flex items-center gap-1.5 transition-all duration-300 cursor-pointer ${
+            isSynced 
+              ? 'bg-emerald-500 text-white shadow-emerald-500/10 scale-105' 
+              : 'bg-white/90 hover:bg-indigo-600 hover:text-white backdrop-blur-sm text-slate-700 hover:scale-105'
+          }`}
+        >
+          {isSynced ? (
+            <>
+              <CheckCircle size={12} className="stroke-[2.5]" />
+              <span>SYNCED</span>
+            </>
+          ) : (
+            <>
+              <CloudLightning size={12} className="text-indigo-500 group-hover:text-white" />
+              <span>SYNC</span>
+            </>
+          )}
+        </button>
+
         {/* Top-right extension badge */}
         <span className={`absolute top-4 right-4 text-[10px] font-bold px-2 py-0.5 rounded-md shadow-sm select-none uppercase tracking-wider ${
           file.type === 'pdf' ? 'bg-rose-100/90 text-rose-700' :
