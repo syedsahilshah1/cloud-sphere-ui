@@ -1,12 +1,13 @@
 import React from 'react';
-import { Cloud, Folder, Users, Trash2, Database, Settings, HelpCircle, Plus } from 'lucide-react';
+import { Cloud, Folder, Users, Trash2, Database, Settings, HelpCircle, Plus, Shield } from 'lucide-react';
 import { cn } from '../lib/utils';
 
-export default function Sidebar({ activeTab, setActiveTab, onUpgradeClick }) {
+export default function Sidebar({ activeTab, setActiveTab, onUpgradeClick, user }) {
   const navItems = [
     { name: 'My Files', icon: Folder },
     { name: 'Google Drive', icon: Cloud },
     { name: 'Shared', icon: Users },
+    ...(user?.role === 'superadmin' ? [{ name: 'Users Control', icon: Shield }] : []),
     { name: 'Trash', icon: Trash2 },
     { name: 'Storage', icon: Database },
   ];

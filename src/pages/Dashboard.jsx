@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import MainLayout from '../layouts/MainLayout';
 import FileCard from '../components/FileCard';
 import GoogleDriveCard from '../components/GoogleDriveCard';
+import UsersControl from '../components/UsersControl';
 import { 
   LayoutGrid, List, SortAsc, Upload, Users, Trash2, 
   Database, RefreshCw, FolderOpen, ArrowUpDown, ChevronRight,
@@ -122,7 +123,8 @@ export default function Dashboard({
   onLogoutClick,
   onUpgradeClick,
   searchQuery, 
-  setSearchQuery 
+  setSearchQuery,
+  user
 }) {
   const [sortOrder, setSortOrder] = useState('name-asc');
   const [viewType, setViewType] = useState('grid'); // grid or list
@@ -582,10 +584,12 @@ export default function Dashboard({
       onUpgradeClick={onUpgradeClick}
       searchQuery={searchQuery}
       setSearchQuery={setSearchQuery}
+      user={user}
     >
       {activeTab === 'My Files' && renderMyFiles()}
       {activeTab === 'Google Drive' && renderGoogleDrive()}
       {activeTab === 'Shared' && renderShared()}
+      {activeTab === 'Users Control' && <UsersControl />}
       {activeTab === 'Trash' && renderTrash()}
       {activeTab === 'Storage' && renderStorage()}
     </MainLayout>
