@@ -84,7 +84,16 @@ function App() {
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
           />
-          <UploadModal isOpen={isUploadOpen} onClose={() => setIsUploadOpen(false)} />
+          <UploadModal 
+            isOpen={isUploadOpen} 
+            onClose={() => setIsUploadOpen(false)} 
+            user={user}
+            onUploadComplete={() => {
+              if (typeof window !== 'undefined' && window.refreshDashboard) {
+                window.refreshDashboard();
+              }
+            }}
+          />
         </>
       )}
     </>

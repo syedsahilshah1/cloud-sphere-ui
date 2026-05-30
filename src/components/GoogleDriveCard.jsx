@@ -1,7 +1,9 @@
-import React from 'react';
-import { MoreVertical, FileText, FileCode, Film, Eye, CloudLightning, CheckCircle } from 'lucide-react';
+import React, { useState } from 'react';
+import { MoreVertical, FileText, FileCode, Film, Eye, CloudLightning, CheckCircle, Mail, Download, Archive, Trash2 } from 'lucide-react';
 
-export default function GoogleDriveCard({ file, isSynced, onSyncToggle, onMenuClick }) {
+export default function GoogleDriveCard({ file, isSynced, onSyncToggle, onDeleteFile }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
   const hasPreview = file.type === 'jpg' || file.type === 'png' || (file.previewUrl && file.previewUrl.startsWith('http'));
 
   const handleSyncClick = (e) => {
@@ -11,8 +13,115 @@ export default function GoogleDriveCard({ file, isSynced, onSyncToggle, onMenuCl
     }
   };
 
+  const toggleMenu = (e) => {
+    e.stopPropagation();
+    setIsMenuOpen(prev => !prev);
+  };
+
+  const triggerToast = (msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 3000);
+  };
+
+  const handleEmail = (e) => {
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    triggerToast(`📧 Dispatched: Link sent to sahilkhan536ah@gmail.com!`);
+  };
+
+  const handleDownload = (e) => {
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    triggerToast(`⬇️ Verified: Downloading ${file.name}...`);
+    // If it has a downloadable link, try to trigger it, else simulate
+    if (file.previewUrl && file.previewUrl.startsWith('http')) {
+      const a = document.createElement('a');
+      a.href = file.previewUrl;
+      a.download = file.name;
+      a.target = '_blank';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  };
+
+  const handleArchive = (e) => {
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    triggerToast(`📦 Archived: Moved to cold storage.`);
+  };
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    setIsMenuOpen(false);
+    if (onDeleteFile) {
+      onDeleteFile(file);
+    }
+  };
+
+  const handleCardClick = () => {
+    const targetUrl = file.previewUrl || file.webViewLink;
+    if (targetUrl && targetUrl.startsWith('http')) {
+      window.open(targetUrl, '_blank');
+    } else {
+      triggerToast(`📂 Opening secure sandbox viewer for "${file.name}"...`);
+    }
+  };
+
   return (
-    <div className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.015)] hover:shadow-[0_12px_40px_rgba(90,81,230,0.08)] hover:border-slate-200/60 transition-all duration-300 overflow-hidden flex flex-col group h-64 select-none relative">
+    <div 
+      onClick={handleCardClick}
+      className="bg-white rounded-3xl border border-slate-100 shadow-[0_4px_20px_rgba(0,0,0,0.015)] hover:shadow-[0_12px_40px_rgba(90,81,230,0.08)] hover:border-slate-200/60 transition-all duration-300 overflow-hidden flex flex-col group h-64 select-none relative cursor-pointer"
+    >
+      {/* Toast Notification inside card */}
+      {toastMsg && (
+        <div className="absolute top-16 left-4 right-4 z-40 bg-slate-900/95 backdrop-blur-md text-white text-[11px] font-bold py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 shadow-lg border border-slate-800 animate-in fade-in slide-in-from-top-2 duration-200">
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
+      {/* Dropdown Menu Backdrop */}
+      {isMenuOpen && (
+        <div 
+          className="fixed inset-0 z-20 cursor-default" 
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsMenuOpen(false);
+          }}
+        ></div>
+      )}
+
+      {/* Dropdown Menu */}
+      {isMenuOpen && (
+        <div className="absolute right-4 top-14 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-slate-100 py-1.5 w-44 z-30 animate-in fade-in slide-in-from-top-3 duration-200">
+          <button 
+            onClick={handleEmail}
+            className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-2"
+          >
+            <Mail size={14} className="text-slate-400" /> Send on Email
+          </button>
+          <button 
+            onClick={handleDownload}
+            className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-2"
+          >
+            <Download size={14} className="text-slate-400" /> Download File
+          </button>
+          <button 
+            onClick={handleArchive}
+            className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 transition-colors flex items-center gap-2"
+          >
+            <Archive size={14} className="text-slate-400" /> Archive Asset
+          </button>
+          <div className="border-t border-slate-100 my-1"></div>
+          <button 
+            onClick={handleDelete}
+            className="w-full text-left px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 transition-colors flex items-center gap-2"
+          >
+            <Trash2 size={14} className="text-rose-500" /> Delete (Trash)
+          </button>
+        </div>
+      )}
+
       {/* Thumbnail area */}
       <div className="relative h-44 bg-slate-50 flex items-center justify-center border-b border-slate-100 overflow-hidden">
         {hasPreview ? (
@@ -49,7 +158,7 @@ export default function GoogleDriveCard({ file, isSynced, onSyncToggle, onMenuCl
         {/* Top-left Sync Action Badge */}
         <button
           onClick={handleSyncClick}
-          className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1.5 rounded-full shadow-md select-none tracking-wider flex items-center gap-1.5 transition-all duration-300 cursor-pointer ${
+          className={`absolute top-4 left-4 text-[10px] font-bold px-3 py-1.5 rounded-full shadow-md select-none tracking-wider flex items-center gap-1.5 transition-all duration-300 cursor-pointer z-10 ${
             isSynced 
               ? 'bg-emerald-500 text-white shadow-emerald-500/10 scale-105' 
               : 'bg-white/90 hover:bg-indigo-600 hover:text-white backdrop-blur-sm text-slate-700 hover:scale-105'
@@ -83,18 +192,18 @@ export default function GoogleDriveCard({ file, isSynced, onSyncToggle, onMenuCl
       {/* Info area */}
       <div className="p-4 flex-1 flex flex-col justify-between bg-white">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="font-semibold text-slate-800 text-sm truncate flex-1 group-hover:text-indigo-600 transition-colors" title={file.name}>
+          <h3 className="font-semibold text-slate-800 text-sm truncate flex-1 group-hover:text-indigo-600 transition-colors font-sans" title={file.name}>
             {file.name}
           </h3>
           <button 
-            onClick={onMenuClick}
-            className="text-slate-400 hover:text-slate-700 transition-colors cursor-pointer p-0.5 rounded-md hover:bg-slate-50"
+            onClick={toggleMenu}
+            className="text-slate-400 hover:text-slate-700 transition-colors cursor-pointer p-0.5 rounded-md hover:bg-slate-50 relative z-10"
           >
             <MoreVertical size={16} />
           </button>
         </div>
         <p className="text-xs text-slate-400 font-medium">
-          Modified {file.modified} • {file.size}
+          Modified {file.modified || 'Just now'} • {file.size}
         </p>
       </div>
     </div>

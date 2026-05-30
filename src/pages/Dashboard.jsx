@@ -139,6 +139,122 @@ export default function Dashboard({
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [driveApiError, setDriveApiError] = useState(null);
 
+  // Stateful lists for personal files and trash bin files
+  const [personalFiles, setPersonalFiles] = useState(() => {
+    const saved = localStorage.getItem(`cs_personal_files_${user?.email}`);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return myFilesList;
+  });
+
+  const [deletedFiles, setDeletedFiles] = useState(() => {
+    const saved = localStorage.getItem(`cs_deleted_files_${user?.email}`);
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {}
+    }
+    return [
+      { id: 'del-1', name: 'Legacy_Blueprint.pdf', type: 'pdf', modified: '2 days ago', size: '14.8 MB', source: 'mock' },
+      { id: 'del-2', name: 'Draft_Landing_Page.png', type: 'png', modified: '4 days ago', size: '3.2 MB', source: 'mock' }
+    ];
+  });
+
+  const handleDeletePersonalFile = (file) => {
+    const nextPersonal = personalFiles.filter(f => f.id !== file.id);
+    setPersonalFiles(nextPersonal);
+    localStorage.setItem(`cs_personal_files_${user?.email}`, JSON.stringify(nextPersonal));
+
+    const newDeleted = [
+      {
+        id: file.id,
+        name: file.name,
+        type: file.type || 'document',
+        modified: 'Just now',
+        size: file.size || 'Unknown size',
+        source: 'personal'
+      },
+      ...deletedFiles
+    ];
+    setDeletedFiles(newDeleted);
+    localStorage.setItem(`cs_deleted_files_${user?.email}`, JSON.stringify(newDeleted));
+  };
+
+  const handleDeleteDriveFile = async (file) => {
+    // 1. Remove from database / unsync
+    if (syncedFileIds.includes(file.id)) {
+      const nextSyncedIds = syncedFileIds.filter(id => id !== file.id);
+      setSyncedFileIds(nextSyncedIds);
+      localStorage.setItem(`cs_synced_files_${user?.email}`, JSON.stringify(nextSyncedIds));
+
+      try {
+        await supabase
+          .from('drive_files')
+          .delete()
+          .eq('drive_file_id', file.id);
+      } catch (err) {
+        console.warn("Supabase database delete failed on manual delete:", err.message);
+      }
+    }
+
+    // 2. Remove from driveFiles view
+    const nextDriveFiles = driveFiles.filter(f => f.id !== file.id);
+    setDriveFiles(nextDriveFiles);
+
+    // 3. Add to deletedFiles list
+    const newDeleted = [
+      {
+        id: file.id,
+        name: file.name,
+        type: file.type || 'document',
+        modified: 'Just now',
+        size: file.size || 'Unknown size',
+        source: 'drive',
+        fileObj: file
+      },
+      ...deletedFiles
+    ];
+    setDeletedFiles(newDeleted);
+    localStorage.setItem(`cs_deleted_files_${user?.email}`, JSON.stringify(newDeleted));
+  };
+
+  const handleRestoreFile = (file) => {
+    if (file.source === 'personal') {
+      const restored = {
+        id: file.id,
+        name: file.name,
+        type: file.type || 'document',
+        lastOpened: 'Just now',
+        members: [{ avatar: user?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80' }]
+      };
+      const nextPersonal = [restored, ...personalFiles];
+      setPersonalFiles(nextPersonal);
+      localStorage.setItem(`cs_personal_files_${user?.email}`, JSON.stringify(nextPersonal));
+    } else if (file.source === 'drive') {
+      if (file.fileObj) {
+        setDriveFiles(prev => [file.fileObj, ...prev]);
+      }
+    }
+
+    const nextDeleted = deletedFiles.filter(f => f.id !== file.id);
+    setDeletedFiles(nextDeleted);
+    localStorage.setItem(`cs_deleted_files_${user?.email}`, JSON.stringify(nextDeleted));
+  };
+
+  const handleDeletePermanently = (file) => {
+    const nextDeleted = deletedFiles.filter(f => f.id !== file.id);
+    setDeletedFiles(nextDeleted);
+    localStorage.setItem(`cs_deleted_files_${user?.email}`, JSON.stringify(nextDeleted));
+  };
+
+  const handleEmptyTrash = () => {
+    setDeletedFiles([]);
+    localStorage.setItem(`cs_deleted_files_${user?.email}`, JSON.stringify([]));
+  };
+
   // Load files and synced status
   const fetchSyncedFiles = async () => {
     if (!user) return;
@@ -187,6 +303,10 @@ export default function Dashboard({
 
   useEffect(() => {
     loadDriveFiles();
+    window.refreshDashboard = loadDriveFiles;
+    return () => {
+      window.refreshDashboard = null;
+    };
   }, [user, activeTab]);
 
   // Sync / Unsync handler
@@ -410,6 +530,7 @@ export default function Dashboard({
                     file={file} 
                     isSynced={syncedFileIds.includes(file.id)}
                     onSyncToggle={handleSyncToggle}
+                    onDeleteFile={handleDeleteDriveFile}
                   />
                 ))}
               </div>
@@ -432,23 +553,28 @@ export default function Dashboard({
 
               <div className="mb-4">
                 <div className="flex items-center justify-between text-xs text-slate-500 font-semibold mb-1.5">
-                  <span>Google Drive</span>
-                  <span className="text-indigo-600 font-bold">85% Used</span>
+                  <span>Workspace Drive</span>
+                  <span className="text-indigo-600 font-bold">{user?.role === 'superadmin' ? '34% Used' : '40% Used'}</span>
                 </div>
                 <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                  <div className="bg-indigo-600 h-full rounded-full transition-all duration-500" style={{ width: '85%' }}></div>
+                  <div 
+                    className="bg-indigo-600 h-full rounded-full transition-all duration-500" 
+                    style={{ width: user?.role === 'superadmin' ? '34%' : '40%' }}
+                  ></div>
                 </div>
               </div>
 
-              <p className="text-xs text-slate-500 leading-relaxed mb-6 font-medium">
-                You're approaching your limit. Free up 2GB to keep syncing across all devices.
+              <p className="text-xs text-slate-500 leading-relaxed mb-6 font-medium font-sans">
+                {user?.role === 'superadmin' 
+                  ? 'Healthy storage allocation. Your SuperAdmin account is fully synchronized across all cluster instances.' 
+                  : 'You have used 480 GB of your 1.2 TB professional allocation. Keep uploading files seamlessly.'}
               </p>
 
               <button 
                 onClick={onUpgradeClick}
                 className="w-full py-3 px-4 bg-slate-50 border border-slate-200 hover:bg-slate-100 hover:border-slate-300 text-indigo-600 font-bold rounded-2xl text-xs transition-all cursor-pointer text-center"
               >
-                Clean Up Storage
+                {user?.role === 'superadmin' ? 'Manage Allocation' : 'Upgrade Plan'}
               </button>
             </div>
           </div>
@@ -460,7 +586,20 @@ export default function Dashboard({
   // Default My Files render
   const renderMyFiles = () => {
     // Get currently synced files to display them directly
-    const syncedDriveFilesList = driveFiles.filter(f => syncedFileIds.includes(f.id));
+    const syncedDriveFilesList = driveFiles.filter(f => syncedFileIds.includes(f.id) && !f.id.startsWith('uploaded-'));
+    const localUploadedFiles = driveFiles.filter(f => f.id.startsWith('uploaded-') || syncedFileIds.includes(f.id));
+
+    const combinedRecentFiles = [
+      ...localUploadedFiles.map(f => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
+        modified: f.modified || 'Just now',
+        size: f.size,
+        members: ['Me']
+      })),
+      ...recentFiles
+    ];
 
     return (
       <div className="max-w-6xl mx-auto">
@@ -477,8 +616,8 @@ export default function Dashboard({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-          {myFilesList.map(file => (
-            <FileCard key={file.id} file={file} />
+          {personalFiles.map(file => (
+            <FileCard key={file.id} file={file} onDeleteFile={handleDeletePersonalFile} />
           ))}
         </div>
 
@@ -500,6 +639,7 @@ export default function Dashboard({
                   file={file} 
                   isSynced={true}
                   onSyncToggle={handleSyncToggle}
+                  onDeleteFile={handleDeleteDriveFile}
                 />
               ))}
             </div>
@@ -536,7 +676,7 @@ export default function Dashboard({
                 </tr>
               </thead>
               <tbody>
-                {recentFiles.map(file => (
+                {combinedRecentFiles.map(file => (
                   <tr key={file.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors group cursor-pointer">
                     <td className="px-6 py-4 flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm uppercase ${
@@ -566,7 +706,7 @@ export default function Dashboard({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {recentFiles.map(file => (
+            {combinedRecentFiles.map(file => (
               <div key={file.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col justify-between h-44 hover:shadow-md transition-shadow group relative">
                 <div className="flex items-center justify-between mb-4">
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-base uppercase ${
@@ -653,66 +793,73 @@ export default function Dashboard({
   // Trash Bin render
   const renderTrash = () => {
     return (
-      <div className="max-w-4xl mx-auto py-8">
+      <div className="max-w-4xl mx-auto py-8 animate-fade-in">
         <div className="flex items-center justify-between mb-8">
           <div>
             <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2.5">
-              <Trash2 size={24} className="text-indigo-600" /> Trash Bin
+              <Trash2 size={24} className="text-indigo-600 animate-pulse" /> Trash Bin
             </h2>
             <p className="text-xs text-slate-500 mt-1">Items will be permanently deleted after 30 days</p>
           </div>
-          <button className="px-4 py-2 border border-rose-200 hover:bg-rose-50 text-rose-600 font-bold text-xs rounded-xl transition-all cursor-pointer">
-            Empty Trash Bin
-          </button>
+          {deletedFiles.length > 0 && (
+            <button 
+              onClick={handleEmptyTrash}
+              className="px-4 py-2 border border-rose-200 hover:bg-rose-50 text-rose-600 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm hover:shadow active:scale-[0.98]"
+            >
+              Empty Trash Bin
+            </button>
+          )}
         </div>
 
         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">File Name</span>
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</span>
-          </div>
-
-          <div className="divide-y divide-slate-100">
-            <div className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center font-bold text-xs uppercase">
-                  PDF
-                </div>
-                <div>
-                  <h4 className="font-semibold text-sm text-slate-800">Legacy_Blueprint.pdf</h4>
-                  <p className="text-[10px] text-slate-400">Deleted 2 days ago • 14.8 MB</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl text-xs font-bold transition-all cursor-pointer">
-                  Restore
-                </button>
-                <button className="p-2 text-slate-400 hover:text-rose-600 rounded-xl text-xs transition-all cursor-pointer">
-                  Delete Permanently
-                </button>
-              </div>
+          {deletedFiles.length === 0 ? (
+            <div className="p-16 text-center text-slate-400">
+              <Trash2 size={48} className="mx-auto text-slate-300 mb-4 stroke-[1.5]" />
+              <p className="font-semibold text-sm text-slate-700">Your Trash Bin is clean and empty!</p>
+              <p className="text-xs text-slate-400 mt-1">Any personal or synced assets you delete will show up here.</p>
             </div>
+          ) : (
+            <>
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">File Name</span>
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Actions</span>
+              </div>
 
-            <div className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-bold text-xs uppercase">
-                  PNG
-                </div>
-                <div>
-                  <h4 className="font-semibold text-sm text-slate-800">Draft_Landing_Page.png</h4>
-                  <p className="text-[10px] text-slate-400">Deleted 4 days ago • 3.2 MB</p>
-                </div>
+              <div className="divide-y divide-slate-100">
+                {deletedFiles.map(file => (
+                  <div key={file.id} className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-xs uppercase ${
+                        file.type === 'pdf' ? 'bg-rose-50 text-rose-600' :
+                        file.type === 'png' || file.type === 'image' ? 'bg-pink-50 text-pink-600' :
+                        'bg-indigo-50 text-indigo-600'
+                      }`}>
+                        {file.type ? file.type.substring(0, 3) : 'DOC'}
+                      </div>
+                      <div>
+                        <h4 className="font-semibold text-sm text-slate-800">{file.name}</h4>
+                        <p className="text-[10px] text-slate-400">Deleted {file.modified || 'Just now'} • {file.size}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => handleRestoreFile(file)}
+                        className="px-3 py-1.5 text-indigo-600 hover:bg-indigo-50 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                      >
+                        Restore
+                      </button>
+                      <button 
+                        onClick={() => handleDeletePermanently(file)}
+                        className="px-3 py-1.5 text-slate-400 hover:text-rose-600 rounded-xl text-xs font-semibold transition-all cursor-pointer"
+                      >
+                        Delete Permanently
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                <button className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-xl text-xs font-bold transition-all cursor-pointer">
-                  Restore
-                </button>
-                <button className="p-2 text-slate-400 hover:text-rose-600 rounded-xl text-xs transition-all cursor-pointer">
-                  Delete Permanently
-                </button>
-              </div>
-            </div>
-          </div>
+            </>
+          )}
         </div>
       </div>
     );
@@ -720,23 +867,42 @@ export default function Dashboard({
 
   // Detailed Storage breakdown
   const renderStorage = () => {
+    const isSuper = user?.role === 'superadmin';
+    const quotaGb = isSuper ? 2000 : 1200;
+    const usedGb = isSuper ? 680 : 480;
+    const usedPct = isSuper ? 34 : 40;
+    const filesCount = isSuper ? (1428 + driveFiles.length) : (936 + driveFiles.length);
+
+    // Dynamic category allocation
+    const videoGb = isSuper ? 380 : 220;
+    const videoPct = Math.round((videoGb / usedGb) * 100);
+
+    const imageGb = isSuper ? 180 : 150;
+    const imagePct = Math.round((imageGb / usedGb) * 100);
+
+    const docGb = isSuper ? 90 : 85;
+    const docPct = Math.round((docGb / usedGb) * 100);
+
+    const backupGb = isSuper ? 30 : 25;
+    const backupPct = Math.round((backupGb / usedGb) * 100);
+
     return (
-      <div className="max-w-4xl mx-auto py-8">
+      <div className="max-w-4xl mx-auto py-8 animate-fade-in">
         <h2 className="text-2xl font-bold text-slate-800 mb-8 flex items-center gap-2.5">
-          <Database size={24} className="text-indigo-600" /> Storage Diagnostics
+          <Database size={24} className="text-indigo-600 animate-pulse" /> Storage Diagnostics
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">Total Used Space</h3>
-            <p className="text-3xl font-black text-slate-800 mt-2">1.2 TB</p>
-            <p className="text-xs text-emerald-600 font-semibold mt-1">68% of 2 TB quota</p>
+            <p className="text-3xl font-black text-slate-800 mt-2">{usedGb} GB</p>
+            <p className="text-xs text-emerald-600 font-semibold mt-1">{usedPct}% of {isSuper ? '2 TB' : '1.2 TB'} quota</p>
           </div>
 
           <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
             <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">Files Count</h3>
-            <p className="text-3xl font-black text-slate-800 mt-2">4,821</p>
-            <p className="text-xs text-indigo-600 font-semibold mt-1">+148 added this week</p>
+            <p className="text-3xl font-black text-slate-800 mt-2">{filesCount.toLocaleString()}</p>
+            <p className="text-xs text-indigo-600 font-semibold mt-1">+148 synced this week</p>
           </div>
 
           <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
@@ -756,40 +922,40 @@ export default function Dashboard({
             <div>
               <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-2">
                 <span>High-res Videos (.mp4, .mov)</span>
-                <span>650 GB</span>
+                <span>{videoGb} GB</span>
               </div>
               <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-purple-600 h-full rounded-full" style={{ width: '54%' }}></div>
+                <div className="bg-purple-600 h-full rounded-full transition-all duration-500" style={{ width: `${videoPct}%` }}></div>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-2">
                 <span>Creative Image Assets (.png, .jpg, .obj)</span>
-                <span>350 GB</span>
+                <span>{imageGb} GB</span>
               </div>
               <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-pink-600 h-full rounded-full" style={{ width: '29%' }}></div>
+                <div className="bg-pink-600 h-full rounded-full transition-all duration-500" style={{ width: `${imagePct}%` }}></div>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-2">
                 <span>Documents & Spreadsheets (.pdf, .docx, .xls)</span>
-                <span>150 GB</span>
+                <span>{docGb} GB</span>
               </div>
               <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-emerald-600 h-full rounded-full" style={{ width: '12%' }}></div>
+                <div className="bg-emerald-600 h-full rounded-full transition-all duration-500" style={{ width: `${docPct}%` }}></div>
               </div>
             </div>
 
             <div>
               <div className="flex items-center justify-between text-xs text-slate-600 font-semibold mb-2">
                 <span>Other Backups</span>
-                <span>50 GB</span>
+                <span>{backupGb} GB</span>
               </div>
               <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-indigo-600 h-full rounded-full" style={{ width: '5%' }}></div>
+                <div className="bg-indigo-600 h-full rounded-full transition-all duration-500" style={{ width: `${backupPct}%` }}></div>
               </div>
             </div>
           </div>
