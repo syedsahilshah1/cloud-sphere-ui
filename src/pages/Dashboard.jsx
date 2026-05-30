@@ -137,6 +137,7 @@ export default function Dashboard({
   const [driveFiles, setDriveFiles] = useState(gdriveMockFiles);
   const [syncedFileIds, setSyncedFileIds] = useState([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [driveApiError, setDriveApiError] = useState(null);
 
   // Load files and synced status
   const fetchSyncedFiles = async () => {
@@ -167,17 +168,20 @@ export default function Dashboard({
 
     if (user.isDriveLinked && user.accessToken) {
       setIsLoadingFiles(true);
+      setDriveApiError(null);
       try {
         const files = await fetchRealGoogleDriveFiles(user.accessToken);
         setDriveFiles(files);
       } catch (err) {
-        console.warn("Could not retrieve real Google Drive files (token may have expired). Falling back to sandbox:", err);
+        console.error("Could not retrieve real Google Drive files:", err);
+        setDriveApiError(err.message || 'Could not retrieve real Google Drive files.');
         setDriveFiles(gdriveMockFiles);
       } finally {
         setIsLoadingFiles(false);
       }
     } else {
       setDriveFiles(gdriveMockFiles);
+      setDriveApiError(null);
     }
   };
 
@@ -374,6 +378,19 @@ export default function Dashboard({
             </button>
           </div>
         </div>
+
+        {driveApiError && (
+          <div className="mb-6 p-5 bg-rose-50 border border-rose-100 rounded-3xl text-xs text-rose-800 leading-relaxed flex items-start gap-3 shadow-[0_4px_12px_rgba(244,63,94,0.02)]">
+            <Shield size={16} className="text-rose-500 flex-shrink-0 mt-0.5 animate-pulse" />
+            <div>
+              <p className="font-bold text-rose-900 mb-1 text-xs uppercase tracking-wider">Google Drive Access Restricted</p>
+              <p className="font-medium text-rose-700">{driveApiError}</p>
+              <p className="mt-2 text-rose-600/90 font-medium">
+                💡 Troubleshooting: Ensure you have enabled the <strong>Google Drive API</strong> in your Google Cloud Console library for the selected project. Also, when signing in, make sure to <strong>check the checkbox option</strong> that allows the application to read files from your Google Drive!
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Content grid with sidebar */}
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
