@@ -63,7 +63,7 @@ export default function Sidebar({ activeTab, setActiveTab, onUpgradeClick, user 
               <path
                 className="text-indigo-600"
                 strokeWidth="4"
-                strokeDasharray="68, 100"
+                strokeDasharray={user?.role === 'superadmin' ? "34, 100" : "40, 100"}
                 strokeLinecap="round"
                 stroke="currentColor"
                 fill="none"
@@ -71,12 +71,16 @@ export default function Sidebar({ activeTab, setActiveTab, onUpgradeClick, user 
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-xl font-bold text-slate-800">68%</span>
+              <span className="text-xl font-bold text-slate-800">{user?.role === 'superadmin' ? "34%" : "40%"}</span>
               <span className="text-[10px] text-slate-500 font-medium uppercase">Used</span>
             </div>
           </div>
-          <p className="text-sm font-semibold text-slate-800">1.2 TB / 2 TB</p>
-          <p className="text-xs text-slate-500 mt-1">Storage almost full</p>
+          <p className="text-sm font-semibold text-slate-800">
+            {user?.role === 'superadmin' ? "680 GB / 2 TB" : "480 GB / 1.2 TB"}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            {user?.role === 'superadmin' ? "Healthy space available" : "Healthy space available"}
+          </p>
         </div>
 
         <div className="space-y-1">

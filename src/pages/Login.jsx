@@ -33,8 +33,9 @@ export default function Login({ onLogin }) {
   const [googleClientId, setGoogleClientId] = useState(() => {
     return import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('cs_google_client_id') || '';
   });
-  const [showClientIdInfo, setShowClientIdInfo] = useState(false);
+  const [showClientIdInfo, setShowClientIdInfo] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
+  const [copySuccess, setCopySuccess] = useState(false);
 
   // Custom sign-in form states
   const [isCustomSignInOpen, setIsCustomSignInOpen] = useState(false);
@@ -129,21 +130,38 @@ export default function Login({ onLogin }) {
     }
   };
 
+  const handleCopyOrigin = () => {
+    navigator.clipboard.writeText(window.location.origin);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
+
   // Triggers Google GIS Client flow
   const handleLiveGoogleLogin = async () => {
-    if (!googleClientId) {
+    // Sanitize client ID: remove quotes, spaces, etc.
+    let cleanedId = googleClientId.trim();
+    cleanedId = cleanedId.replace(/['"]+/g, ''); // strip any quotes
+
+    if (!cleanedId) {
       setErrorMessage('Please enter a valid Google Client ID to authorize with Google Identity Services.');
       setShowClientIdInfo(true);
       return;
     }
 
+    if (!cleanedId.includes('.apps.googleusercontent.com')) {
+      setErrorMessage('Invalid Google Client ID format. It should look like: [numbers]-[characters].apps.googleusercontent.com. Make sure you did not paste a client secret or project name.');
+      setShowClientIdInfo(true);
+      return;
+    }
+
     setErrorMessage('');
-    localStorage.setItem('cs_google_client_id', googleClientId.trim());
+    setGoogleClientId(cleanedId); // sync state with sanitized value
+    localStorage.setItem('cs_google_client_id', cleanedId);
 
     try {
       setVerificationStage('verifying_google');
       // Trigger GIS authorization popup
-      const tokenResponse = await requestGoogleAccessToken(googleClientId.trim());
+      const tokenResponse = await requestGoogleAccessToken(cleanedId);
       const accessToken = tokenResponse.access_token;
 
       // Fetch user profile information using standard oauth endpoint
@@ -180,12 +198,25 @@ export default function Login({ onLogin }) {
       }, 1500);
 
     } catch (err) {
-      console.error(err);
+      console.error("GIS Flow Error:", err);
       setVerificationStage('idle');
-      setErrorMessage(
-        err.message || 
-        (err.error ? `Google OAuth Error: ${err.error}` : 'Sign in cancelled or configuration rejected by Google Auth policy.')
-      );
+      
+      let parsedMessage = 'Sign in cancelled or configuration rejected by Google Auth policy.';
+      if (err && typeof err === 'object') {
+        const errType = err.error || err.details || '';
+        if (errType === 'invalid_client' || (err.message && err.message.includes('invalid_client'))) {
+          parsedMessage = `Error 401 (invalid_client): Google does not recognize this Client ID. Ensure you have copied the Client ID correctly (it must contain the project numeric prefix and end in .apps.googleusercontent.com). Also ensure the JavaScript origin is configured to: ${window.location.origin}`;
+        } else if (errType === 'popup_closed_by_user') {
+          parsedMessage = 'Authentication popup was closed before completion. Please try again.';
+        } else if (errType === 'access_denied') {
+          parsedMessage = 'Access denied: Google Drive readonly permission was rejected. You must authorize read-only drive access to continue.';
+        } else if (err.message) {
+          parsedMessage = err.message;
+        } else if (typeof err.error === 'string') {
+          parsedMessage = `Google Auth Error: ${err.error}`;
+        }
+      }
+      setErrorMessage(parsedMessage);
     }
   };
 
@@ -486,27 +517,64 @@ export default function Login({ onLogin }) {
               {useLiveGoogle && (
                 <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4 animate-fade-in text-left">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide">Google Cloud OAuth ID</span>
+                    <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide flex items-center gap-1">
+                      <Sparkles size={11} className="text-indigo-500" />
+                      Google Cloud OAuth ID
+                    </span>
                     <button
                       type="button"
                       onClick={() => setShowClientIdInfo(!showClientIdInfo)}
-                      className="text-indigo-500 hover:text-indigo-700 transition-colors"
-                      title="How to get a client ID"
+                      className="text-indigo-500 hover:text-indigo-700 transition-colors text-[10px] font-bold flex items-center gap-0.5 cursor-pointer"
                     >
-                      <HelpCircle size={14} />
+                      <HelpCircle size={12} />
+                      <span>{showClientIdInfo ? 'Hide Setup' : 'Show Setup'}</span>
                     </button>
                   </div>
                   
                   {showClientIdInfo && (
                     <div className="text-[10px] text-indigo-900 leading-relaxed mb-3 bg-white p-3 rounded-xl border border-indigo-100/50 animate-fade-in shadow-[0_4px_12px_rgba(90,81,230,0.03)]">
                       <p className="font-bold mb-1">To get your Google Client ID:</p>
-                      <ol className="list-decimal list-inside space-y-0.5">
+                      <ol className="list-decimal list-inside space-y-1 mb-2">
                         <li>Go to Google Cloud Console.</li>
                         <li>Create a project & enable <strong>Google Drive API</strong>.</li>
                         <li>Create OAuth consent screen (External, add scope: <code>.../auth/drive.readonly</code>).</li>
-                        <li>Create OAuth client ID (Web application) & set Authorized JavaScript origins to <code>http://localhost:5173</code> (or your current port).</li>
+                        <li>Create OAuth client ID (Web application) & set Authorized JavaScript origins to the value below.</li>
                         <li>Copy the Client ID and paste it below.</li>
                       </ol>
+
+                      <div className="mt-3 bg-indigo-500/5 p-2.5 rounded-lg border border-indigo-500/10 text-[9px] text-indigo-900/90 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-indigo-700">Authorized JavaScript Origin:</span>
+                          <button
+                            type="button"
+                            onClick={handleCopyOrigin}
+                            className={`px-1.5 py-0.5 rounded text-[8px] font-black tracking-wider uppercase transition-all border cursor-pointer ${
+                              copySuccess
+                                ? 'bg-emerald-500 border-emerald-600 text-white'
+                                : 'bg-indigo-600 border-indigo-700 text-white hover:bg-indigo-700 active:scale-95'
+                            }`}
+                          >
+                            {copySuccess ? 'Copied!' : 'Copy'}
+                          </button>
+                        </div>
+                        <code className="block bg-indigo-950 text-indigo-300 p-1.5 rounded font-mono text-[9px] select-all tracking-tight break-all border border-indigo-800">
+                          {window.location.origin}
+                        </code>
+                        <p className="leading-normal text-indigo-700/80">
+                          ⚠️ If your browser port changes (e.g. to <code>5181</code>), Google will reject authentication with a <strong>401: invalid_client</strong> or <strong>origin_mismatch</strong> error. Ensure you match the console setting exactly!
+                        </p>
+                      </div>
+
+                      <div className="mt-2.5 flex justify-end">
+                        <a
+                          href="https://console.cloud.google.com/apis/credentials"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-0.5 text-[9px] font-extrabold text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                        >
+                          Google Cloud Credentials Console ↗
+                        </a>
+                      </div>
                     </div>
                   )}
 
@@ -514,14 +582,33 @@ export default function Login({ onLogin }) {
                     type="text"
                     value={googleClientId}
                     onChange={(e) => setGoogleClientId(e.target.value)}
-                    placeholder="Enter client-id.apps.googleusercontent.com"
-                    className="w-full px-3 py-2 bg-white border border-indigo-200 focus:border-indigo-600 focus:outline-none rounded-xl text-xs text-slate-800 placeholder-slate-400 shadow-sm"
+                    placeholder="Paste your client-id.apps.googleusercontent.com"
+                    className="w-full px-3 py-2 bg-white border border-indigo-200 focus:border-indigo-600 focus:outline-none rounded-xl text-xs text-slate-800 placeholder-slate-400 shadow-sm transition-all"
                   />
-                  {errorMessage && (
-                    <p className="text-[10px] font-semibold text-rose-600 mt-2 bg-rose-50 border border-rose-100 p-2 rounded-lg leading-relaxed flex items-start gap-1">
-                      <ShieldAlert size={12} className="flex-shrink-0 mt-0.5" />
-                      <span>{errorMessage}</span>
+                  
+                  {googleClientId && !googleClientId.includes('.apps.googleusercontent.com') && (
+                    <p className="text-[9px] font-bold text-amber-600 mt-1 bg-amber-50 border border-amber-100 p-1.5 rounded-lg leading-relaxed flex items-start gap-1">
+                      ⚠️ Client ID should end with ".apps.googleusercontent.com" - verify you did not copy a client secret or project name.
                     </p>
+                  )}
+
+                  {errorMessage && (
+                    <div className="text-[10px] font-semibold text-rose-600 mt-2 bg-rose-50 border border-rose-100 p-3 rounded-lg leading-relaxed space-y-1.5 animate-pulse">
+                      <div className="flex items-start gap-1.5">
+                        <ShieldAlert size={14} className="flex-shrink-0 mt-0.5" />
+                        <span>{errorMessage}</span>
+                      </div>
+                      {errorMessage.includes('invalid_client') && (
+                        <div className="pt-1.5 border-t border-rose-200/50 text-[9px] text-rose-700 leading-normal font-normal">
+                          <p className="font-bold">Troubleshooting 401 error:</p>
+                          <ul className="list-disc list-inside space-y-0.5 mt-0.5">
+                            <li>Check if the Client ID has leading or trailing white spaces.</li>
+                            <li>Check if the Google Cloud project was created under an organization with API restrictions.</li>
+                            <li>Make sure the OAuth client ID is set to <strong>Web application</strong> (not Desktop or Web service).</li>
+                          </ul>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
